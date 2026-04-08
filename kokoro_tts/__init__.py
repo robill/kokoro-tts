@@ -74,18 +74,104 @@ def list_available_voices(kokoro):
         print(f"{idx + 1}. {voice}")
     return voices
 
+def soup_to_text(element):
+    """Convert a BeautifulSoup element to plain text, preserving ordered and
+    unordered list enumeration that would otherwise be discarded by get_text().
+    Block-level elements are separated by newlines and given sentence-ending
+    punctuation so the TTS engine inserts a natural pause at each boundary."""
+    from bs4 import NavigableString, Tag
+
+    BLOCK_TAGS = {
+        'p', 'div', 'section', 'article', 'blockquote',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'dt', 'dd', 'figcaption', 'caption',
+        'header', 'footer', 'main', 'nav', 'aside',
+    }
+    SENTENCE_END = {'.', '!', '?', ':', ';'}
+
+    def _ensure_sentence_end(text):
+        """Append a period if the text doesn't end with sentence-ending punctuation."""
+        t = text.rstrip()
+        if t and t[-1] not in SENTENCE_END:
+            return t + '.'
+        return t
+
+    def _process(node):
+        # Only process plain text nodes; skip comments, processing instructions, doctypes, etc.
+        if isinstance(node, NavigableString):
+            if type(node) is not NavigableString:
+                return ''
+            # Collapse in-source soft-wrap newlines/runs of whitespace to a single space
+            return re.sub(r'\s+', ' ', str(node))
+        if not isinstance(node, Tag):
+            return ''
+
+        # Skip <head> — title and metadata should not appear in TTS output
+        if node.name == 'head':
+            return ''
+
+        # Line break → pause marker
+        if node.name == 'br':
+            return '\n'
+
+        if node.name == 'ol':
+            list_type = node.get('type', '1')
+            try:
+                start = int(node.get('start', 1))
+            except (ValueError, TypeError):
+                start = 1
+            parts = []
+            counter = 0
+            for child in node.children:
+                if isinstance(child, Tag) and child.name == 'li':
+                    n = start + counter
+                    if list_type in ('a',):
+                        prefix = chr(ord('a') + n - 1) + '. '
+                    elif list_type in ('A',):
+                        prefix = chr(ord('A') + n - 1) + '. '
+                    else:
+                        prefix = str(n) + '. '
+                    parts.append(prefix + _ensure_sentence_end(_process(child).strip()))
+                    counter += 1
+            return '\n' + '\n'.join(parts) + '\n'
+
+        if node.name == 'ul':
+            parts = []
+            for child in node.children:
+                if isinstance(child, Tag) and child.name == 'li':
+                    parts.append('- ' + _ensure_sentence_end(_process(child).strip()))
+            return '\n' + '\n'.join(parts) + '\n'
+
+        # Block-level elements: wrap with newlines and ensure sentence-ending punctuation
+        # so the TTS engine treats each block as a distinct utterance with a pause.
+        if node.name in BLOCK_TAGS:
+            inner = ''.join(_process(child) for child in node.children).strip()
+            if not inner:
+                return ''
+            return '\n' + _ensure_sentence_end(inner) + '\n'
+
+        # For all other tags, recursively process children
+        return ''.join(_process(child) for child in node.children)
+
+    return _process(element)
+
+
 def extract_text_from_epub(epub_file):
     book = epub.read_epub(epub_file)
     full_text = ""
     for item in book.get_items():
         if item.get_type() == ITEM_DOCUMENT:
             soup = BeautifulSoup(item.get_body_content(), "html.parser")
-            full_text += soup.get_text()
+            full_text += soup_to_text(soup)
     return full_text
 
 def chunk_text(text, initial_chunk_size=1000):
     """Split text into chunks at sentence boundaries with dynamic sizing."""
-    sentences = text.replace('\n', ' ').split('.')
+    # Convert newlines to sentence boundaries so block-level pauses are preserved.
+    # Collapse runs of whitespace/newlines, then split on periods.
+    normalised = re.sub(r'\n+', '. ', text)          # newline → sentence break
+    normalised = re.sub(r'\.(\s*\.)+', '.', normalised)  # deduplicate consecutive periods
+    sentences = normalised.split('.')
     chunks = []
     current_chunk = []
     current_size = 0
@@ -314,7 +400,7 @@ def extract_chapters_from_epub(epub_file, debug=False):
             # Stop if we hit another chapter heading
             if current.name in ['h1', 'h2', 'h3'] and 'chapter' in current.get_text().lower():
                 break
-            content.append(current.get_text())
+            content.append(soup_to_text(current))
             current = current.find_next_sibling()
             
         return '\n'.join(content).strip()
@@ -351,7 +437,7 @@ def extract_chapters_from_epub(epub_file, debug=False):
                     
                     # If no fragment ID, get whole document content
                     if not fragment_id:
-                        text_content = soup.get_text().strip()
+                        text_content = soup_to_text(soup).strip()
                     else:
                         # Get the next fragment ID if available
                         next_item = items[i + 1] if i + 1 < len(items) else None
@@ -417,7 +503,7 @@ def extract_chapters_from_epub(epub_file, debug=False):
                             'chapter' in tag.get_text().lower() or
                             'book' in tag.get_text().lower()):
                             break
-                        content += tag.get_text() + '\n'
+                        content += soup_to_text(tag) + '\n'
                     
                     if content.strip():
                         chapters.append({
@@ -429,7 +515,7 @@ def extract_chapters_from_epub(epub_file, debug=False):
                             print(f"Added chapter: {title}")
             else:
                 # No chapter divisions found, treat whole document as one chapter
-                text_content = soup.get_text().strip()
+                text_content = soup_to_text(soup).strip()
                 if text_content:
                     # Try to find a title
                     title_tag = soup.find(['h1', 'h2', 'title'])
@@ -808,82 +894,88 @@ def process_chunk_sequential(chunk: str, kokoro: Kokoro, voice: str, speed: floa
         return None, None
 
 def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, lang="en-us", 
-                         stream=False, split_output=None, format="wav", debug=False, stdin_indicators=None,
+                         stream=False, split_output=None, format="wav", debug=False, dry_run=False,
+                         stdin_indicators=None,
                          model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
     global stop_spinner
     
     # Define stdin indicators if not provided
     if stdin_indicators is None:
         stdin_indicators = ['/dev/stdin', '-', 'CONIN$']  # CONIN$ is Windows stdin
-    
-    # Check for required files first
-    check_required_files(model_path, voices_path)
-    
-    # Load Kokoro model
-    try:
-        kokoro = Kokoro(model_path, voices_path)
 
-        # Validate language after loading model
-        lang = validate_language(lang, kokoro)
-        
-        # Handle voice selection
-        if voice:
-            voice = validate_voice(voice, kokoro)
-        else:
-            # Check if we're using stdin (can't do interactive input)
-            if input_file in stdin_indicators:
-                print("Using stdin - automatically selecting default voice (af_sarah)")
-                voice = "af_sarah"  # default voice
+    if dry_run:
+        print("[dry-run] TTS generation disabled — chunk text files will be written but no audio produced.")
+        kokoro = None
+        voice = None
+    else:
+        # Check for required files first
+        check_required_files(model_path, voices_path)
+
+        # Load Kokoro model
+        try:
+            kokoro = Kokoro(model_path, voices_path)
+
+            # Validate language after loading model
+            lang = validate_language(lang, kokoro)
+            
+            # Handle voice selection
+            if voice:
+                voice = validate_voice(voice, kokoro)
             else:
-                # Interactive voice selection
-                voices = list_available_voices(kokoro)
-                print("\nHow to choose a voice:")
-                print("You can use either a single voice or blend two voices together.")
-                print("\nFor a single voice:")
-                print("  • Just enter one number (example: '7')")
-                print("\nFor blending two voices:")
-                print("  • Enter two numbers separated by comma")
-                print("  • Optionally add weights after each number using ':weight'")
-                print("\nExamples:")
-                print("  • '7'      - Use voice #7 only")
-                print("  • '7,11'   - Mix voices #7 and #11 equally (50% each)")
-                print("  • '7:60,11:40' - Mix 60% of voice #7 with 40% of voice #11")
-                try:
-                    voice_input = input("Choose voice(s) by number: ")
-                    if ',' in voice_input:
-                        # Handle blended voices
-                        pairs = []
-                        for pair in voice_input.split(','):
-                            if ':' in pair:
-                                num, weight = pair.strip().split(':')
-                                voice_idx = int(num.strip()) - 1
-                                if not (0 <= voice_idx < len(voices)):
-                                    raise ValueError(f"Invalid voice number: {int(num)}")
-                                pairs.append(f"{voices[voice_idx]}:{weight}")
-                            else:
-                                voice_idx = int(pair.strip()) - 1
-                                if not (0 <= voice_idx < len(voices)):
-                                    raise ValueError(f"Invalid voice number: {int(pair)}")
-                                pairs.append(voices[voice_idx])
-                        voice = ','.join(pairs)
-                    else:
-                        # Single voice
-                        voice_choice = int(voice_input) - 1
-                        if not (0 <= voice_choice < len(voices)):
-                            raise ValueError("Invalid choice")
-                        voice = voices[voice_choice]
-                    # Validate and potentially convert to blend
-                    voice = validate_voice(voice, kokoro)
-                except (ValueError, IndexError):
-                    print("Invalid choice. Using default voice.")
+                # Check if we're using stdin (can't do interactive input)
+                if input_file in stdin_indicators:
+                    print("Using stdin - automatically selecting default voice (af_sarah)")
                     voice = "af_sarah"  # default voice
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error loading Kokoro model: {e}")
-        sys.exit(1)
-    
+                else:
+                    # Interactive voice selection
+                    voices = list_available_voices(kokoro)
+                    print("\nHow to choose a voice:")
+                    print("You can use either a single voice or blend two voices together.")
+                    print("\nFor a single voice:")
+                    print("  • Just enter one number (example: '7')")
+                    print("\nFor blending two voices:")
+                    print("  • Enter two numbers separated by comma")
+                    print("  • Optionally add weights after each number using ':weight'")
+                    print("\nExamples:")
+                    print("  • '7'      - Use voice #7 only")
+                    print("  • '7,11'   - Mix voices #7 and #11 equally (50% each)")
+                    print("  • '7:60,11:40' - Mix 60% of voice #7 with 40% of voice #11")
+                    try:
+                        voice_input = input("Choose voice(s) by number: ")
+                        if ',' in voice_input:
+                            # Handle blended voices
+                            pairs = []
+                            for pair in voice_input.split(','):
+                                if ':' in pair:
+                                    num, weight = pair.strip().split(':')
+                                    voice_idx = int(num.strip()) - 1
+                                    if not (0 <= voice_idx < len(voices)):
+                                        raise ValueError(f"Invalid voice number: {int(num)}")
+                                    pairs.append(f"{voices[voice_idx]}:{weight}")
+                                else:
+                                    voice_idx = int(pair.strip()) - 1
+                                    if not (0 <= voice_idx < len(voices)):
+                                        raise ValueError(f"Invalid voice number: {int(pair)}")
+                                    pairs.append(voices[voice_idx])
+                            voice = ','.join(pairs)
+                        else:
+                            # Single voice
+                            voice_choice = int(voice_input) - 1
+                            if not (0 <= voice_choice < len(voices)):
+                                raise ValueError("Invalid choice")
+                            voice = voices[voice_choice]
+                        # Validate and potentially convert to blend
+                        voice = validate_voice(voice, kokoro)
+                    except (ValueError, IndexError):
+                        print("Invalid choice. Using default voice.")
+                        voice = "af_sarah"  # default voice
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error loading Kokoro model: {e}")
+            sys.exit(1)
+
     # Read the input file (handle .txt or .epub)
     if input_file.endswith('.epub'):
         chapters = extract_chapters_from_epub(input_file, debug)
@@ -926,6 +1018,17 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                 text = file.read()
         # Treat single text file as one chapter
         chapters = [{'title': 'Chapter 1', 'content': text}]
+
+    # Base path for chunk text dump files (e.g. "aab-dk_test1")
+    chunk_dump_base = os.path.splitext(input_file)[0]
+    chunk_dump_counter = [0]  # mutable so inner scopes can increment
+    dry_run_total_words = [0]  # accumulate word count across all chunks
+
+    def write_chunk_dump(chunk_text, chapter_num):
+        chunk_dump_counter[0] += 1
+        dump_path = f"{chunk_dump_base}_ch{chapter_num:03d}_chunk_{chunk_dump_counter[0]:04d}.txt"
+        with open(dump_path, 'w', encoding='utf-8') as f:
+            f.write(chunk_text)
 
     if stream:
         import asyncio
@@ -991,7 +1094,10 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                     )
                     spinner_thread.start()
                     
-                    try:
+                    if dry_run:
+                        write_chunk_dump(chunk, chapter_num)
+                    if not dry_run:
+                      try:
                         samples, sample_rate = process_chunk_sequential(
                             chunk, kokoro, voice, speed, lang, 
                             retry_count=0, debug=debug  # Add retry parameters
@@ -999,11 +1105,16 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                         if samples is not None:
                             sf.write(chunk_file, samples, sample_rate)
                             processed_chunks += 1
-                    except Exception as e:
+                      except Exception as e:
                         print(f"\nError processing chunk {chunk_num}: {e}")
                     
                     stop_spinner = True
                     spinner_thread.join()
+
+                    if dry_run:
+                        word_count = len(chunk.split())
+                        dry_run_total_words[0] += word_count
+                        print(f"  chunk {chunk_num:>{len(str(total_chunks))}}/{total_chunks}  {word_count:>5} words  {chunk[:80].strip()!r}")
                     
                     if stop_audio:  # Check for interruption
                         break
@@ -1013,6 +1124,8 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                 if stop_audio:  # Check for interruption
                     break
             
+            if dry_run:
+                print(f"\nTotal: {chunk_dump_counter[0]} chunks, {dry_run_total_words[0]:,} words")
             print(f"\nCreated audio files for {len(chapters)} chapters in {split_output}/")
         else:
             # Combine all chapters into one file
@@ -1036,7 +1149,10 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                     )
                     spinner_thread.start()
                     
-                    try:
+                    if dry_run:
+                        write_chunk_dump(chunk, chapter_num)
+                    if not dry_run:
+                      try:
                         samples, sr = process_chunk_sequential(
                             chunk, kokoro, voice, speed, lang,
                             retry_count=0, debug=debug  # Add retry parameters
@@ -1046,13 +1162,24 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
                                 sample_rate = sr
                             all_samples.extend(samples)
                             processed_chunks += 1
-                    except Exception as e:
+                      except Exception as e:
                         print(f"\nError processing chunk {chunk_num}: {e}")
+                    
+                    stop_spinner = True
+                    spinner_thread.join()
+
+                    if dry_run:
+                        word_count = len(chunk.split())
+                        dry_run_total_words[0] += word_count
+                        print(f"  chunk {chunk_num:>{len(str(total_chunks))}}/{total_chunks}  {word_count:>5} words  {chunk[:80].strip()!r}")
                     
                     stop_spinner = True
                     spinner_thread.join()
                 
                 print(f"\nCompleted {chapter['title']}: {processed_chunks}/{total_chunks} chunks processed")
+            
+            if dry_run:
+                print(f"\nTotal: {chunk_dump_counter[0]} chunks, {dry_run_total_words[0]:,} words")
             
             if all_samples:
                 print("\nSaving complete audio file...")
@@ -1239,6 +1366,7 @@ def get_valid_options():
         '--split-output',
         '--format',
         '--debug',
+        '--dry-run',
         '--model',
         '--voices'
     }
@@ -1380,11 +1508,13 @@ def main():
     
     # Add debug flag
     debug = '--debug' in sys.argv
+    dry_run = '--dry-run' in sys.argv
     
     # Convert text to audio with debug flag
     convert_text_to_audio(input_file, output_file, voice=voice, stream=stream, 
                          speed=speed, lang=lang, split_output=split_output, 
-                         format=format, debug=debug, stdin_indicators=stdin_indicators,
+                         format=format, debug=debug, dry_run=dry_run,
+                         stdin_indicators=stdin_indicators,
                          model_path=model_path, voices_path=voices_path)
 
 
