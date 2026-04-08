@@ -26,3 +26,4 @@ chunks/
 *.pdf
 !requirements.txt
 !demo.*
+venv/
