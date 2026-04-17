@@ -1,0 +1,57 @@
+{
+    "_comment": "Abbreviation → spoken-form map used by podcast_tts.py.",
+    "_comment2": "Entries are matched longest-first so 'ASIL-B' beats 'ASIL'.",
+    "_comment3": "Any remaining 3-6 char ALL-CAPS word is auto-spaced (A B C) as a fallback.",
+
+    "Project / product": {
+        "AQRP":    "A Q R P",
+        "ICAST":   "I Cast",
+        "SWPF":    "S W P F",
+        "HOSP":    "H O S P",
+        "PL1":     "P L 1",
+        "HDK":     "H D K"
+    },
+
+    "Safety": {
+        "ASIL-B":  "AY-sil B",
+        "ASIL-A":  "AY-sil A",
+        "ASIL-C":  "AY-sil C",
+        "ASIL-D":  "AY-sil D",
+        "ASIL":    "AY-sil"
+    },
+
+    "Automotive / embedded": {
+        "AUTOSAR": "Auto Sar",
+        "QNX":     "Q N X",
+        "SoC":     "System on Chip",
+        "SOC":     "System on Chip",
+        "BSP":     "B S P",
+        "S32G":    "S 32 G"
+    },
+
+    "Teams / processes": {
+        "ANS":     "A N S",
+        "ACM":     "A C M",
+        "IEP":     "I E P",
+        "HEP":     "H E P",
+        "PMT":     "P M T",
+        "DevOps":  "Dev Ops"
+    },
+
+    "Roles / ceremonies": {
+        "STE":     "S T E",
+        "RTE":     "R T E"
+    },
+
+    "Milestones / planning": {
+        "SOP":     "S O P",
+        "TSO":     "T S O",
+        "CI/CT":   "C I, C T"
+    },
+
+    "Architecture levels": {
+        "L1":      "Level 1",
+        "L2":      "Level 2",
+        "L3":      "Level 3"
+    }
+}
