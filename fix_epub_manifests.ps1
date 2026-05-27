@@ -1,8 +1,8 @@
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-
 param(
     [string]$Pattern = "TGR*.epub"
 )
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $epubFiles = Get-ChildItem -Filter $Pattern | Where-Object { -not $_.PSIsContainer }
 
@@ -40,17 +40,18 @@ foreach ($epub in $epubFiles) {
         $nsamgr = New-Object System.Xml.XmlNamespaceManager($opfXml.NameTable)
         $nsamgr.AddNamespace("opf", "http://www.idpf.org/2007/opf")
         
-        # Get all items with Images/ in href
+        # Get all manifest items and check if their files exist in the archive
         $allItems = $opfXml.SelectNodes("//opf:item", $nsamgr)
         $itemsToRemove = @()
-        
+
         foreach ($item in $allItems) {
-            $imagePath = $item.GetAttribute("href")
-            if ($imagePath -and $imagePath -like "*Images/*") {
-                $fullImagePath = Join-Path $tempDir $imagePath
-                
-                if (-not (Test-Path $fullImagePath)) {
-                    Write-Host "    Missing: $imagePath"
+            $href = $item.GetAttribute("href")
+            if ($href) {
+                $fullPath = Join-Path $tempDir (Join-Path "OEBPS" $href)
+                # Also try relative to opf location
+                $altPath  = Join-Path $tempDir $href
+                if (-not (Test-Path $fullPath) -and -not (Test-Path $altPath)) {
+                    Write-Host "    Missing: $href"
                     $itemsToRemove += $item
                 }
             }
