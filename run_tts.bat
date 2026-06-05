@@ -24,4 +24,4 @@ REM python kokoro-tts --merge-chunks --split-output ./chunks/ --format mp3
 REM python kokoro-tts %inputFile% "!baseName!.mp3" --lang en-us --voice "af_nicole:70,bm_lewis:30" --format mp3
 REM python kokoro-tts %inputFile% "!baseName!.mp3" --lang en-us --voice "af_nicole:70,bm_lewis:30" --format mp3 --background "beach-waves(chosic.com).mp3"
 REM python -m kokoro_tts %inputFile% "!baseName!.wav" --lang en-us --voice "af_nicole:70,bm_lewis:30"
-python -m kokoro_tts %inputFile% "!baseName!.mp3" --lang en-us --voice "af_nicole:70,bm_lewis:30" --format mp3
+python -m kokoro_tts %inputFile% "!baseName!.mp3" --lang en-us --voice "af_nicole:70,bm_lewis:30" --format mp3 --compute-type float16

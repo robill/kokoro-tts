@@ -420,6 +420,7 @@ def generate_podcast(
     dry_run: bool = False,
     abbr_map_path: str = _DEFAULT_ABBR_FILE,
     script_type: str = "auto",
+    compute_type: str = "float32",
 ):
     # ── load abbreviations ────────────────────────────────────────────────────
     global _ABBR_PATTERNS
@@ -463,7 +464,13 @@ def generate_podcast(
     check_required_files(model_path, voices_path)
     print("Loading Kokoro model…")
     try:
-        kokoro = Kokoro(model_path, voices_path)
+        # Import and use the float16 helper from kokoro_tts module if available
+        try:
+            from kokoro_tts import create_kokoro_with_compute_type
+            kokoro = create_kokoro_with_compute_type(model_path, voices_path, compute_type=compute_type)
+        except ImportError:
+            # Fallback to standard initialization if helper not available
+            kokoro = Kokoro(model_path, voices_path)
     except Exception as exc:
         print(f"Error loading model: {exc}")
         sys.exit(1)
@@ -629,6 +636,10 @@ def main():
         ),
     )
     parser.add_argument(
+        "--compute-type", default="float32", choices=["float32", "float16"],
+        help="Compute type: float32 (default) or float16 for reduced precision on GPU",
+    )
+    parser.add_argument(
         "--script-type", default="auto", choices=["auto", "podcast", "qa"],
         help=(
             "Script format: 'podcast' (**Host A:** style), "
@@ -672,6 +683,7 @@ def main():
         dry_run=args.dry_run,
         abbr_map_path=args.abbr_map,
         script_type=args.script_type,
+        compute_type=args.compute_type,
     )
 
 

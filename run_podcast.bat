@@ -50,6 +50,7 @@ python podcast_tts.py "%SCRIPT%" "%OUTPUT%" ^
     --abbr-map abbreviations.json ^
     --lang en-us ^
     --format mp3 ^
+    --compute-type float16 ^
     --silence 500
 
 endlocal

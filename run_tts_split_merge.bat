@@ -17,8 +17,8 @@ if "%inputFile%"=="" (
 	python kokoro-tts --merge-chunks --split-output "%baseName%_chunks" --format mp3
 ) else (
 	REM Generate split audio chunks with specified voice blend
-	python kokoro-tts %inputFile% --split-output "!baseName!_chunks" --lang en-us --voice "af_nicole:70,bm_lewis:30" --format mp3
+	python -m kokoro_tts %inputFile% --split-output "!baseName!_chunks" --lang en-us --voice "af_nicole:70,bm_lewis:30" --format mp3 --compute-type float16
 
 	REM Merge the split audio chunks into chapter files
-	python kokoro-tts --merge-chunks --split-output "!baseName!_chunks" --format mp3
+	python -m kokoro_tts --merge-chunks --split-output "!baseName!_chunks" --format mp3
 )

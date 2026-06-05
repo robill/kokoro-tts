@@ -51,6 +51,7 @@ python podcast_tts.py "%SCRIPT%" "%OUTPUT%" ^
     --script-type qa ^
     --lang en-us ^
     --format mp3 ^
+    --compute-type float16 ^
     --silence 600
 
 endlocal

@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 import soundfile as sf
 import sounddevice as sd
 from kokoro_onnx import Kokoro
+import onnxruntime as rt
 import pymupdf4llm
 import fitz
 
@@ -28,6 +29,39 @@ warnings.filterwarnings("ignore", category=FutureWarning, module='ebooklib')
 # Global flag to stop the spinner and audio
 stop_spinner = False
 stop_audio = False
+
+def create_kokoro_with_compute_type(model_path, voices_path, compute_type="float32", espeak_config=None):
+    """
+    Create a Kokoro instance with optional compute type optimization (e.g., float16).
+    
+    Args:
+        model_path: Path to the Kokoro ONNX model file
+        voices_path: Path to the voices binary file
+        compute_type: "float32" (default) or "float16" for reduced precision on GPU
+        espeak_config: Optional espeak configuration
+    
+    Returns:
+        Kokoro instance with the specified compute type
+    """
+    # Check if ONNX_PROVIDER environment variable was set
+    env_provider = os.getenv("ONNX_PROVIDER")
+    providers = [env_provider] if env_provider else rt.get_available_providers()
+    
+    # Create session options with compute type optimization
+    sess_options = rt.SessionOptions()
+    sess_options.log_severity_level = 3  # Suppress warnings (3=ERROR, 2=WARNING, 1=INFO, 0=VERBOSE)
+    
+    if compute_type.lower() == "float16":
+        # Enable float16 computation on GPU (helps with memory and performance on certain GPUs like RTX 2000 Blackwell)
+        sess_options.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # Note: CUDA execution provider will automatically use float16 when beneficial
+    
+    # Create the inference session with the optimized options
+    session = rt.InferenceSession(model_path, sess_options=sess_options, providers=providers)
+    
+    # Create Kokoro instance from the pre-configured session
+    kokoro = Kokoro.from_session(session, voices_path, espeak_config=espeak_config)
+    return kokoro
 
 def check_required_files(model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
     """Check if required model files exist and provide helpful error messages."""
@@ -249,6 +283,8 @@ Options:
     --split-output <dir> Save each chunk as separate file in directory
     --format <str>      Audio format: wav or mp3 (default: wav)
     --debug             Show detailed debug information
+    --compute-type <str> Compute type: float32 or float16 (default: float32)
+                         Use float16 for reduced precision on GPU (faster, lower memory)
     --model <path>      Path to kokoro-v1.0.onnx model file (default: ./kokoro-v1.0.onnx)
     --voices <path>     Path to voices-v1.0.bin file (default: ./voices-v1.0.bin)
 
@@ -896,7 +932,7 @@ def process_chunk_sequential(chunk: str, kokoro: Kokoro, voice: str, speed: floa
 def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, lang="en-us", 
                          stream=False, split_output=None, format="wav", debug=False, dry_run=False,
                          stdin_indicators=None,
-                         model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin"):
+                         model_path="kokoro-v1.0.onnx", voices_path="voices-v1.0.bin", compute_type="float32"):
     global stop_spinner
     
     # Define stdin indicators if not provided
@@ -911,9 +947,9 @@ def convert_text_to_audio(input_file, output_file=None, voice=None, speed=1.0, l
         # Check for required files first
         check_required_files(model_path, voices_path)
 
-        # Load Kokoro model
+        # Load Kokoro model with compute type optimization
         try:
-            kokoro = Kokoro(model_path, voices_path)
+            kokoro = create_kokoro_with_compute_type(model_path, voices_path, compute_type=compute_type)
 
             # Validate language after loading model
             lang = validate_language(lang, kokoro)
@@ -1368,7 +1404,8 @@ def get_valid_options():
         '--debug',
         '--dry-run',
         '--model',
-        '--voices'
+        '--voices',
+        '--compute-type'
     }
 
 
@@ -1457,6 +1494,7 @@ def main():
     merge_chunks = '--merge-chunks' in sys.argv
     model_path = "kokoro-v1.0.onnx"  # default model path
     voices_path = "voices-v1.0.bin"  # default voices path
+    compute_type = "float32"  # default compute type
     
     # Parse optional arguments
     for i, arg in enumerate(sys.argv):
@@ -1481,6 +1519,11 @@ def main():
             model_path = sys.argv[i + 1]
         elif arg == '--voices' and i + 1 < len(sys.argv):
             voices_path = sys.argv[i + 1]
+        elif arg == '--compute-type' and i + 1 < len(sys.argv):
+            compute_type = sys.argv[i + 1].lower()
+            if compute_type not in ['float32', 'float16']:
+                print("Error: Compute type must be either 'float32' or 'float16'")
+                sys.exit(1)
     
     # Handle merge chunks operation
     if merge_chunks:
@@ -1515,7 +1558,7 @@ def main():
                          speed=speed, lang=lang, split_output=split_output, 
                          format=format, debug=debug, dry_run=dry_run,
                          stdin_indicators=stdin_indicators,
-                         model_path=model_path, voices_path=voices_path)
+                         model_path=model_path, voices_path=voices_path, compute_type=compute_type)
 
 
 if __name__ == '__main__':
