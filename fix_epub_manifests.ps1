@@ -16,7 +16,7 @@ Write-Host "Found $($epubFiles.Count) EPUB file(s)`n"
 foreach ($epub in $epubFiles) {
     $epubName = $epub.Name
     $epubPath = $epub.FullName
-    $tempDir = "epub_temp_$(Get-Random)"
+    $tempDir = Join-Path $PWD "epub_temp_$(Get-Random)"
     
     Write-Host "Processing: $epubName"
     
@@ -26,14 +26,15 @@ foreach ($epub in $epubFiles) {
         New-Item $tempDir -ItemType Directory | Out-Null
         [System.IO.Compression.ZipFile]::ExtractToDirectory($epubPath, $tempDir)
         
-        $opfFile = Get-ChildItem -Path $tempDir -Name "content.opf" -Recurse
-        if (-not $opfFile) {
+        $opfFileObj = Get-ChildItem -Path $tempDir -Filter "content.opf" -Recurse | Select-Object -First 1
+        if (-not $opfFileObj) {
             Write-Host "  Warning: No content.opf found"
             Remove-Item $tempDir -Recurse -Force
             continue
         }
-        
-        $opfPath = Join-Path $tempDir $opfFile
+
+        $opfPath = $opfFileObj.FullName
+        $opfDir  = $opfFileObj.DirectoryName
         [xml]$opfXml = Get-Content $opfPath
         
         # Create namespace manager for XPath queries
@@ -47,10 +48,9 @@ foreach ($epub in $epubFiles) {
         foreach ($item in $allItems) {
             $href = $item.GetAttribute("href")
             if ($href) {
-                $fullPath = Join-Path $tempDir (Join-Path "OEBPS" $href)
-                # Also try relative to opf location
-                $altPath  = Join-Path $tempDir $href
-                if (-not (Test-Path $fullPath) -and -not (Test-Path $altPath)) {
+                # Resolve href relative to the OPF file's directory
+                $resolvedPath = Join-Path $opfDir $href
+                if (-not (Test-Path $resolvedPath)) {
                     Write-Host "    Missing: $href"
                     $itemsToRemove += $item
                 }
