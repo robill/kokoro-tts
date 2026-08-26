@@ -8,9 +8,10 @@ REM  Usage:
 REM    run_qa.bat <qa_script.md> [output.mp3]
 REM
 REM  Script format expected:
-REM    ### Q1: question text           → Interviewer voice
-REM    **Model Answer:** answer text   → Candidate voice
-REM    **Follow-up Probe:** text       → Interviewer voice
+REM    ### Q1: question text            → Interviewer voice
+REM    **Model Answer:** answer text    → Candidate voice
+REM    **Follow-up Probe:** text        → Interviewer voice
+REM    **Follow-up Answer:** answer     → Candidate voice
 REM
 REM  Voice assignments (edit below to change):
 REM    Interviewer  →  bm_lewis    (British male)

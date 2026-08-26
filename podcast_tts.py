@@ -222,6 +222,7 @@ _QA_QUESTION_RE = re.compile(r'^#{1,4}\s+Q(\d+):\s*(.*)')
 _QA_SPEAKER_REMAP: dict[str, str] = {
     "Model Answer":  "Candidate",
     "Follow-up Probe": "Interviewer",
+    "Follow-up Answer": "Candidate",
 }
 
 
@@ -233,6 +234,7 @@ def parse_qa_script(filepath: str) -> list[tuple[str, str]]:
     * ``### Q<n>: <text>``  →  ("Interviewer", "Question N. <text>")
     * ``**Model Answer:**``  →  ("Candidate", <text>)
     * ``**Follow-up Probe:**``  →  ("Interviewer", "Follow-up question. <text>")
+    * ``**Follow-up Answer:**``  →  ("Candidate", <text>)
     * ``## Quick Reference`` section (repeated question list) → skipped.
     """
     with open(filepath, "r", encoding="utf-8") as fh:
