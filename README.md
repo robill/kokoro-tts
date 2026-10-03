@@ -245,6 +245,92 @@ kokoro-tts --help-languages
 > If you're using Method 3, replace `kokoro-tts` with `uv run kokoro-tts` in the examples above.
 > If you're using Method 4, replace `kokoro-tts` with `uv run -m kokoro_tts` or `python -m kokoro_tts` in the examples above.
 
+### Bilingual Chinese Study Audio (VIO)
+
+#### Mandarin G2P audio runtime
+
+The custom bilingual and vocabulary audio generators use a dedicated
+`.venv_kokoro_061` environment with `kokoro-onnx==0.6.1` and
+`misaki-fork[zh]==0.9.6`. Keep the original project environment pinned to
+`kokoro-onnx==0.3.9` for the upstream CLI. The Mandarin path converts Hanzi
+with Misaki `ZHG2P(version="1.1")`, then supplies phonemes to the v1.1 Chinese
+model with `is_phonemes=True`. English remains on the existing v1.0 model and
+voice bundle. Use the full-precision Chinese model; the tested FP16 asset
+produced non-finite audio.
+
+The v1.1 voice IDs are different from the old v1.0 IDs such as
+`zf_xiaoxiao`. The selected v1.1 voice is `zf_003`. The audio generators
+record model/G2P settings in their manifests and refuse to reuse checkpoints
+made with different synthesis settings.
+
+Create the isolated runtime without changing the upstream CLI's pinned
+environment:
+
+```powershell
+python -m venv .venv_kokoro_061
+.\.venv_kokoro_061\Scripts\python.exe -m pip install "kokoro-onnx==0.6.1" "misaki-fork[zh]==0.9.6" beautifulsoup4 soundfile pydub
+```
+
+Install the ONNX Runtime GPU build matching the installed CUDA/cuDNN versions
+if GPU execution is desired. Then, from the project root, select CUDA and run
+the custom audio scripts with the isolated interpreter:
+
+```powershell
+$env:ONNX_PROVIDER = "CUDAExecutionProvider"
+.\.venv_kokoro_061\Scripts\python.exe .\bilingual_epub_tts.py `
+  ".\RMJI Bilingual Chapters 0721-0770.epub" `
+  --start 721 --end 721 `
+  --preprocessed-dir ".\RMJI_Bilingual_Chapter_0721_audio_narration_preprocessed" `
+  --output-dir ".\RMJI_Chapter_0721_misaki_g2p_audio" `
+  --zh-voice zf_003 --en-voice af_heart `
+  --zh-speed 0.75 --en-speed 1.0
+```
+
+If recreating this environment, install `beautifulsoup4` there as well; install
+the ONNX Runtime GPU package matching the machine's CUDA/cuDNN versions if GPU
+execution is desired.
+
+For bilingual EPUBs with paired Chinese/English paragraphs, the optional VIO
+preprocessor can simplify only the Chinese text and retain the English as
+meaning context. It produces Chinese-only, audio-ready narration paragraphs;
+Pinyin and English meanings are kept in a separate study glossary and are not
+spoken in the chapter audio. It writes a JSON cache and a side-by-side Markdown
+review for each chapter. Review the narration before using it for TTS.
+
+Configure `.env` locally with `VIO_API_KEY`, `VIO_BASE_URL` (HTTPS), and
+`AI_MODEL`. Never commit `.env`. Confirm the endpoint is approved for the
+source text before sending it. Install the VIO client dependencies from
+`requirements.txt`.
+
+```powershell
+# First preprocess only one chapter; inspect its review Markdown.
+python .\chinese_llm_preprocess.py ".\RMJI Bilingual Chapters 0721-0770.epub" `
+  --start 721 --end 721 --output-dir ".\RMJI_chinese_preprocessed"
+
+# After reviewing, generate audio from the validated cached Chinese text.
+.\.venv_kokoro_061\Scripts\python.exe .\bilingual_epub_tts.py ".\RMJI Bilingual Chapters 0721-0770.epub" `
+  --start 721 --end 721 `
+  --preprocessed-dir ".\RMJI_chinese_preprocessed" `
+  --output-dir ".\RMJI_Chapter_0721_study_audio" `
+  --zh-voice zf_003 --en-voice af_heart `
+  --zh-speed 0.75 --en-speed 1.0
+```
+
+The preprocessing cache is bound to the exact source text and prompt version.
+The audio tool refuses stale or misaligned cache files. Use a new output folder
+when comparing different adaptations or voice/speed settings.
+
+To create a separate review track for the chapter vocabulary, synthesize each
+Hanzi term in Mandarin followed by its English meaning. Pinyin stays in the
+written review sheet and is not spoken:
+
+```powershell
+.\.venv_kokoro_061\Scripts\python.exe .\vocabulary_audio.py `
+  ".\RMJI_Bilingual_Chapter_0721_audio_narration_preprocessed\chapter_0721\chinese_simplification.json" `
+  ".\RMJI_Bilingual_Chapter_0721_audio_narration_preprocessed\chapter_0721\vocabulary_0721.mp3" `
+  --zh-voice zf_003 --en-voice af_heart --zh-speed 0.75 --en-speed 1.0
+```
+
 ## Features in Detail
 
 ### EPUB Processing

@@ -6,7 +6,13 @@ dist/
 wheels/
 *.egg-info
 test.*
-.venv
+.venv*
+.env
+.env.*
+!.env.example
+*_chinese_preprocessed/
+RMJI_Bilingual_*_Audio*/
+*_generation.log
 *.bkp
 *.wav
 *.mp3
@@ -27,3 +33,4 @@ chunks/
 !requirements.txt
 !demo.*
 venv/
+Done/
