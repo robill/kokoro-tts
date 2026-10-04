@@ -192,6 +192,82 @@ def _prepare_chapter(chapter: Chapter, output_dir: Path, max_chars: int) -> list
     return jobs
 
 
+def _synthesize_vocabulary_appendix(
+    chapter_dir: Path,
+    backend: KokoroBilingualBackend,
+    voices: dict[str, str],
+    speeds: dict[str, float],
+    vocabulary: object,
+    pause_ms: int,
+) -> tuple[np.ndarray, int]:
+    """Synthesize Hanzi terms and English meanings as resumable WAV checkpoints.
+
+    @param chapter_dir: Chapter output directory for vocabulary WAV checkpoints.
+    @param backend: Language-matched Kokoro and Misaki synthesis backend.
+    @param voices: Chinese and English voice IDs.
+    @param speeds: Chinese and English synthesis speeds.
+    @param vocabulary: Validated Hanzi/Pinyin/English entries from preprocessing.
+    @param pause_ms: Silence after each English definition, in milliseconds.
+    @return: Concatenated float32 audio and sample rate.
+    @raises ValueError: If the glossary schema is empty or malformed.
+    @raises RuntimeError: If any vocabulary audio cannot be synthesized or read.
+    """
+    if not isinstance(vocabulary, list) or not vocabulary:
+        raise ValueError("The selected chapter has no vocabulary entries to append.")
+    if pause_ms < 0:
+        raise ValueError("Vocabulary pause duration cannot be negative.")
+
+    checkpoint_dir = chapter_dir / "vocabulary_segments"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    normalized: list[dict[str, str]] = []
+    for index, item in enumerate(vocabulary, 1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Vocabulary entry {index} is not an object.")
+        row = {key: item.get(key) for key in ("hanzi", "pinyin", "english")}
+        if any(not isinstance(value, str) or not value.strip() for value in row.values()):
+            raise ValueError(f"Vocabulary entry {index} is missing Hanzi, Pinyin, or English text.")
+        normalized.append({key: value.strip() for key, value in row.items()})
+
+    ordered_paths: list[tuple[Path, str, int]] = []
+    total_parts = len(normalized) * 2
+    for index, item in enumerate(normalized, 1):
+        for language, text in (("zh", item["hanzi"]), ("en", item["english"])):
+            checkpoint = checkpoint_dir / f"item_{index:03d}_{language}.wav"
+            if not _valid_wav(checkpoint):
+                samples, sample_rate = backend.synthesize_with_fallback(
+                    text,
+                    language,
+                    voices[language],
+                    speeds[language],
+                )
+                if len(samples) == 0 or not np.isfinite(samples).all():
+                    raise RuntimeError(f"No valid audio produced for vocabulary item {index} ({language}).")
+                sf.write(str(checkpoint), np.asarray(samples, dtype=np.float32), sample_rate)
+                print(f"[Vocabulary {len(ordered_paths) + 1}/{total_parts}] Saved {checkpoint.name}")
+            ordered_paths.append((checkpoint, language, index))
+
+    audio_parts: list[np.ndarray] = []
+    sample_rate: int | None = None
+    for checkpoint, language, index in ordered_paths:
+        samples, rate = sf.read(str(checkpoint), dtype="float32")
+        if not np.isfinite(samples).all() or samples.size == 0:
+            raise RuntimeError(f"Vocabulary checkpoint is empty or non-finite: {checkpoint}")
+        if sample_rate is None:
+            sample_rate = rate
+        elif rate != sample_rate:
+            raise RuntimeError(f"Sample-rate mismatch in vocabulary checkpoint {checkpoint}: {rate} vs {sample_rate}")
+        audio_parts.append(np.asarray(samples, dtype=np.float32))
+        if language == "zh":
+            # Add a short boundary so each Hanzi term is distinct from its English gloss.
+            audio_parts.append(np.zeros(int(rate * 0.25), dtype=np.float32))
+        elif index < len(normalized) and pause_ms:
+            audio_parts.append(np.zeros(int(rate * pause_ms / 1000), dtype=np.float32))
+
+    if sample_rate is None or not audio_parts:
+        raise RuntimeError("No vocabulary audio was generated.")
+    return np.concatenate(audio_parts), sample_rate
+
+
 def _process_chapter(
     chapter: Chapter,
     output_dir: Path,
@@ -202,6 +278,8 @@ def _process_chapter(
     max_chars: int,
     dry_run: bool,
     preprocessing: dict[str, object] | None = None,
+    include_vocabulary_audio: bool = False,
+    vocabulary_pause_ms: int = 600,
 ) -> None:
     chapter_dir = output_dir / f"chapter_{chapter.number:04d}"
     segment_dir = chapter_dir / "segments"
@@ -217,6 +295,13 @@ def _process_chapter(
     for segment in chapter.segments:
         counts[segment.language] += 1
     print(f"Language segments: Chinese={counts['zh']}, English={counts['en']}")
+    if include_vocabulary_audio:
+        vocabulary = preprocessing.get("vocabulary") if preprocessing else None
+        if not isinstance(vocabulary, list) or not vocabulary:
+            raise ValueError(
+                "--include-vocabulary-audio requires a reviewed preprocessing cache with vocabulary entries."
+            )
+        print(f"Vocabulary audio: {len(vocabulary)} items; Pinyin stays unspoken")
     if dry_run:
         for segment_no, segment in enumerate(chapter.segments, 1):
             print(f"  {segment_no:03d} {segment.language:2s} {segment.kind:9s} {segment.text[:160]}")
@@ -234,6 +319,18 @@ def _process_chapter(
         "silence_ms": silence_ms,
         "max_chars": max_chars,
         "preprocessing": preprocessing,
+        "include_vocabulary_audio": include_vocabulary_audio,
+        "vocabulary_audio": (
+            {
+                "items": len(preprocessing["vocabulary"]),
+                "spoken_fields": ["hanzi", "english"],
+                "pinyin_spoken": False,
+                "pause_after_hanzi_ms": 250,
+                "pause_after_english_ms": vocabulary_pause_ms,
+            }
+            if include_vocabulary_audio and preprocessing is not None
+            else None
+        ),
         "segments": [asdict(segment) for segment in chapter.segments],
     }
     if manifest_path.exists():
@@ -302,9 +399,30 @@ def _process_chapter(
     if sample_rate is None or not ordered_audio:
         raise RuntimeError(f"No audio segments were generated for chapter {chapter.number}")
     final_audio = np.concatenate(ordered_audio)
+    if include_vocabulary_audio:
+        if backend is None or preprocessing is None:
+            raise RuntimeError("Vocabulary audio requires the initialized synthesis backend and preprocessing cache.")
+        glossary_audio, glossary_rate = _synthesize_vocabulary_appendix(
+            chapter_dir,
+            backend,
+            voices,
+            speeds,
+            preprocessing.get("vocabulary"),
+            vocabulary_pause_ms,
+        )
+        if glossary_rate != sample_rate:
+            raise RuntimeError(
+                f"Vocabulary sample-rate mismatch: {glossary_rate} vs chapter rate {sample_rate}."
+            )
+        if silence_ms:
+            final_audio = np.concatenate(
+                (final_audio, np.zeros(int(sample_rate * silence_ms / 1000), dtype=np.float32))
+            )
+        final_audio = np.concatenate((final_audio, glossary_audio))
     output_path = chapter_dir / f"chapter_{chapter.number:04d}.mp3"
     _export_mp3(final_audio, sample_rate, output_path)
     duration = len(final_audio) / sample_rate
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Completed: {output_path} ({duration / 60:.1f} minutes, {output_path.stat().st_size:,} bytes)")
 
 
@@ -321,6 +439,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--speed", type=float, default=None, help="Deprecated: set both languages to this speed; overridden by --zh-speed/--en-speed")
     parser.add_argument("--silence-ms", type=int, default=250, help="Pause between source paragraphs (default: 250 ms)")
     parser.add_argument("--max-chars", type=int, default=450, help="Maximum characters per TTS request (default: 450)")
+    parser.add_argument(
+        "--include-vocabulary-audio",
+        action="store_true",
+        help="Append cached Hanzi terms and English meanings after the chapter narration",
+    )
+    parser.add_argument(
+        "--vocabulary-pause-ms",
+        type=int,
+        default=600,
+        help="Pause after each English vocabulary meaning (default: 600 ms)",
+    )
     parser.add_argument(
         "--preprocessed-dir",
         type=Path,
@@ -352,6 +481,12 @@ def main() -> int:
         if not 0.5 <= speed <= 2.0:
             print(f"Error: {language} speed must be between 0.5 and 2.0", file=sys.stderr)
             return 2
+    if args.vocabulary_pause_ms < 0:
+        print("Error: --vocabulary-pause-ms cannot be negative", file=sys.stderr)
+        return 2
+    if args.include_vocabulary_audio and args.preprocessed_dir is None:
+        print("Error: --include-vocabulary-audio requires --preprocessed-dir", file=sys.stderr)
+        return 2
     epub_path = args.epub.resolve()
     if not epub_path.is_file():
         print(f"Error: EPUB not found: {epub_path}", file=sys.stderr)
@@ -401,6 +536,8 @@ def main() -> int:
                     args.max_chars,
                     True,
                     preprocessing_by_chapter.get(chapter.number),
+                    args.include_vocabulary_audio,
+                    args.vocabulary_pause_ms,
                 )
             return 0
 
@@ -427,6 +564,8 @@ def main() -> int:
                 args.max_chars,
                 False,
                 preprocessing_by_chapter.get(chapter.number),
+                args.include_vocabulary_audio,
+                args.vocabulary_pause_ms,
             )
         return 0
     except Exception as exc:

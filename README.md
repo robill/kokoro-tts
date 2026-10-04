@@ -50,14 +50,11 @@ uv tool install kokoro-tts
 pip install kokoro-tts
 ```
 
-After installation, you can run:
 ```bash
 kokoro-tts --help
 ```
 
 ### Method 2: Install from Git
-
-Install directly from the repository:
 
 ```bash
 # Using uv (recommended)
@@ -280,7 +277,7 @@ $env:ONNX_PROVIDER = "CUDAExecutionProvider"
 .\.venv_kokoro_061\Scripts\python.exe .\bilingual_epub_tts.py `
   ".\RMJI Bilingual Chapters 0721-0770.epub" `
   --start 721 --end 721 `
-  --preprocessed-dir ".\RMJI_Bilingual_Chapter_0721_audio_narration_preprocessed" `
+  --preprocessed-dir ".\RMJI_chinese_preprocessed" `
   --output-dir ".\RMJI_Chapter_0721_misaki_g2p_audio" `
   --zh-voice zf_003 --en-voice af_heart `
   --zh-speed 0.75 --en-speed 1.0
@@ -320,16 +317,101 @@ The preprocessing cache is bound to the exact source text and prompt version.
 The audio tool refuses stale or misaligned cache files. Use a new output folder
 when comparing different adaptations or voice/speed settings.
 
+To append the cached vocabulary after the chapter narration, add
+`--include-vocabulary-audio`. Each item is spoken as Hanzi by the Mandarin
+voice, followed by its English meaning; Pinyin is not synthesized. WAV
+checkpoints are stored separately in the chapter output so interrupted runs
+can resume. The default pause after each English meaning is 600 ms.
+
+```powershell
+.\.venv_kokoro_061\Scripts\python.exe .\bilingual_epub_tts.py `
+  ".\RMJI Bilingual Chapters 0721-0770.epub" `
+  --start 721 --end 721 `
+  --preprocessed-dir ".\RMJI_chinese_preprocessed" `
+  --output-dir ".\RMJI_Chapter_0721_study_audio" `
+  --zh-voice zf_003 --en-voice af_heart `
+  --zh-speed 0.75 --en-speed 1.0 `
+  --include-vocabulary-audio
+```
+
+#### Optional simplified-EPUB export
+
+After reviewing the preprocessing cache, export the selected rewritten
+chapters as a separate EPUB. This step uses the existing cache only; it does
+not call the LLM or alter the source EPUB. English paragraphs, Chinese chapter
+headings, EPUB package metadata, and chapters outside the selected range are
+preserved. The exporter checks each cache against its source digest and
+paragraph alignment before writing, then verifies the finished archive. Add
+`--include-glossary` to append that chapter's written Hanzi, tone-marked Pinyin,
+and English meanings at the end of the chapter. Pinyin remains written and is
+not added to the spoken audio.
+
+```powershell
+python .\simplified_epub_export.py `
+  ".\RMJI Bilingual Chapters 0721-0770.epub" `
+  ".\RMJI_chinese_preprocessed" `
+  ".\RMJI_Bilingual_Chapter_0721_simplified_study.epub" `
+  --start 721 --end 721 --include-glossary
+```
+
+Use `--start` and `--end` to export only chapters with reviewed caches. If
+omitted, the exporter selects every paired chapter in the source and requires
+a valid cache for each. An existing output is not overwritten unless `--force`
+is supplied. When regenerating an existing EPUB, the export preserves its
+Calibre reading bookmark metadata.
+
 To create a separate review track for the chapter vocabulary, synthesize each
 Hanzi term in Mandarin followed by its English meaning. Pinyin stays in the
 written review sheet and is not spoken:
 
 ```powershell
 .\.venv_kokoro_061\Scripts\python.exe .\vocabulary_audio.py `
-  ".\RMJI_Bilingual_Chapter_0721_audio_narration_preprocessed\chapter_0721\chinese_simplification.json" `
-  ".\RMJI_Bilingual_Chapter_0721_audio_narration_preprocessed\chapter_0721\vocabulary_0721.mp3" `
+  ".\RMJI_chinese_preprocessed\chapter_0721\chinese_simplification.json" `
+  ".\RMJI_chinese_preprocessed\chapter_0721\vocabulary_0721.mp3" `
   --zh-voice zf_003 --en-voice af_heart --zh-speed 0.75 --en-speed 1.0
 ```
+
+#### Merge chapters into one audiobook
+
+After all chapter MP3s have been generated, concatenate the numbered files in
+chapter order into one MP3. The merger requires every chapter in the requested
+range and verifies matching audio properties and full-file decodability. It
+uses MP3 stream copy, so the audio is not re-encoded and per-chapter files stay
+in place.
+
+```powershell
+.\.venv_kokoro_061\Scripts\python.exe .\merge_chapter_audio.py `
+  ".\RMJI_Bilingual_Chapters_0721-0770_zf003_Misaki_Audio" `
+  ".\RMJI_Bilingual_Chapters_0721-0770_zf003_Misaki_Audiobook.mp3" `
+  --start 721 --end 770
+```
+
+Add `--force` to replace an existing combined output after validation.
+
+#### Run the complete bilingual-EPUB workflow from Command Prompt
+
+The project-scoped Copilot skill at
+[.github/skills/bilingual-epub-audiobook/SKILL.md](kokoro-tts/.github/skills/bilingual-epub-audiobook/SKILL.md)
+guides source inspection/splitting, paired-XHTML preflight, VIO cache creation
+and review, study-EPUB export, chapter TTS with spoken vocabulary, and final
+merge. It explicitly checks that each chapter has the expected
+`split_000`/`split_001` pair and that EPUB TOC chapter numbers are not confused
+with spine/split-line indices.
+
+For a prepared paired bilingual EPUB, the generic Windows runner executes the
+full pipeline, prompting for review after preprocessing. It reuses valid
+caches and WAV checkpoints when resuming an interrupted run:
+
+```bat
+run_bilingual_epub_pipeline.bat "D:\Books\MyBook_Paired.epub" 101 150
+```
+
+Use the fourth argument `--plan` to show the selected paths/stages without
+running them, or `--no-pause` only after the review has been approved. The
+existing `run_rmji_pipeline.bat` is a convenience wrapper for the RMJI sample
+range 721–770. Outputs are placed in the project folder using the source stem
+and selected range; per-chapter MP3s and resumable WAVs remain alongside the
+single merged audiobook and study EPUB.
 
 ## Features in Detail
 
