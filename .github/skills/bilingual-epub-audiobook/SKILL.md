@@ -47,11 +47,20 @@ The intended bilingual body alternates Chinese and English paragraphs. The parse
 
 Run from the Kokoro project root. Verify, without displaying credentials:
 
-- `.venv_kokoro_061\Scripts\python.exe` exists and imports `kokoro-onnx==0.6.1`, `misaki-fork[zh]`, `beautifulsoup4`, `openai`, and `python-dotenv`.
+- On a fresh Windows checkout, run `setup_bilingual_audio_env.ps1 -Provider cuda` (or `-Provider cpu`) to build `.venv_kokoro_061` from `requirements-bilingual-audio.lock.txt`, fetch/checksum model assets, and smoke-test both language models. For nonstandard CUDA/cuDNN DLL folders, pass `-CudaBin` and `-CudnnBin`.
+- The tested runtime is CPython 3.11.9 x64, `kokoro-onnx==0.6.1`, and `misaki-fork[zh]==0.9.6`. Keep the upstream CLI venv (Kokoro 0.3.9) separate from the bilingual-audio venv (0.6.1).
+- For splitting, use the checked-out EpubSplit utility with its pinned `beautifulsoup4`/`six` dependencies; the lock file includes both and the skill recommends placing the isolated venv's `Scripts` directory first on `PATH` when invoking the PowerShell wrapper.
+- `.venv_kokoro_061\Scripts\python.exe` imports the pinned Kokoro/Misaki packages, `beautifulsoup4`, `openai`, and `python-dotenv`.
 - Full-precision `models/kokoro-v1.1-zh.onnx` and `models/voices-v1.1-zh.bin` exist. Do not use the FP16 Chinese model; it produced NaNs in testing.
 - English `kokoro-v1.0.onnx` and `voices-v1.0.bin` exist.
 - `ffmpeg` and `ffprobe` are on PATH.
 - `.env` contains the required VIO settings. Never echo their values.
+
+The setup script downloads the Chinese v1.1 files from the official Kokoro ONNX
+model-files release and the English v1.0 files from the upstream Kokoro TTS
+release. It verifies SHA-256 checksums listed in `setup_bilingual_audio_env.ps1`.
+The v1.1 Chinese `config.json` is optional for this tested pipeline because the
+model embeds the vocabulary used by Misaki.
 
 Use Chinese voice `zf_003`, English voice `af_heart`, Chinese speed `0.75`, English speed `1.0` by default. The Chinese route must be Misaki `ZHG2P(version="1.1")` followed by Kokoro `is_phonemes=True`; do not use the old v1.0 Chinese tokenizer.
 

@@ -264,28 +264,76 @@ Create the isolated runtime without changing the upstream CLI's pinned
 environment:
 
 ```powershell
-python -m venv .venv_kokoro_061
-.\.venv_kokoro_061\Scripts\python.exe -m pip install "kokoro-onnx==0.6.1" "misaki-fork[zh]==0.9.6" beautifulsoup4 soundfile pydub
+# Install CPython 3.11.9 x64 from https://www.python.org/downloads/release/python-3119/
+# and FFmpeg 8.1.1 (ffmpeg + ffprobe on PATH) first; Windows builds:
+# https://www.gyan.dev/ffmpeg/builds/
+# Check out the repository commit/branch, then run from the project root:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_bilingual_audio_env.ps1 -Provider cuda
 ```
 
-Install the ONNX Runtime GPU build matching the installed CUDA/cuDNN versions
-if GPU execution is desired. Then, from the project root, select CUDA and run
-the custom audio scripts with the isolated interpreter:
+The bootstrap installs the exact packages in
+`requirements-bilingual-audio.lock.txt`, then installs exactly one ONNX Runtime
+build. The tested setup uses CPython 3.11.9 x64, pip 26.2.1, Kokoro ONNX 0.6.1,
+Misaki Fork 0.9.6, and ONNX Runtime GPU 1.23.2. Exact application package
+versions are in `requirements-bilingual-audio.lock.txt`; ONNX Runtime is
+installed separately because CPU and GPU wheels conflict. The root project
+environment remains separate and pinned to Kokoro ONNX 0.3.9. The bootstrap
+loads both models and synthesizes short Chinese and English smoke samples.
+The repository's `.python-version` applies to its separate upstream CLI
+environment; the bilingual audio bootstrap intentionally creates its own
+CPython 3.11.9 environment.
+The known-good machine also uses CUDA 12.9, cuDNN 9.14, and FFmpeg 8.1.1;
+these are native system tools, not Python packages.
+
+For GPU execution, install a CUDA 12.x and cuDNN 9 runtime compatible with the
+ONNX Runtime GPU build. If their DLL folders are not discoverable via
+`CUDA_PATH` and `CUDNN_PATH`, pass them explicitly, for example:
 
 ```powershell
-$env:ONNX_PROVIDER = "CUDAExecutionProvider"
-.\.venv_kokoro_061\Scripts\python.exe .\bilingual_epub_tts.py `
-  ".\RMJI Bilingual Chapters 0721-0770.epub" `
-  --start 721 --end 721 `
-  --preprocessed-dir ".\RMJI_chinese_preprocessed" `
-  --output-dir ".\RMJI_Chapter_0721_misaki_g2p_audio" `
-  --zh-voice zf_003 --en-voice af_heart `
-  --zh-speed 0.75 --en-speed 1.0
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_bilingual_audio_env.ps1 -Provider cuda `
+  -CudaBin "C:\Path\To\CUDA\bin" `
+  -CudnnBin "C:\Path\To\cuDNN\bin"
 ```
 
-If recreating this environment, install `beautifulsoup4` there as well; install
-the ONNX Runtime GPU package matching the machine's CUDA/cuDNN versions if GPU
-execution is desired.
+Use `powershell -NoProfile -ExecutionPolicy Bypass -File .\setup_bilingual_audio_env.ps1 -Provider cpu` on a machine without a
+compatible NVIDIA CUDA/cuDNN runtime. CPU synthesis is slower but avoids the
+GPU DLL dependency. Do not install `onnxruntime` and `onnxruntime-gpu`
+simultaneously; they use the same Python import namespace. CUDA/cuDNN
+installation paths are machine-specific. The setup script uses `CUDA_PATH` and
+`CUDNN_PATH` when available, or accepts explicit binary-directory parameters;
+use that machine's compatible runtime rather than copying DLLs from this PC.
+
+#### Model and voice assets
+
+The setup script downloads missing upstream model/voice assets and verifies
+these SHA-256 digests. Keep the Chinese model full precision; the tested FP16
+Chinese model generated non-finite samples.
+
+| Asset | Location | SHA-256 |
+| --- | --- | --- |
+| Kokoro v1.1 Chinese FP32 | `models/kokoro-v1.1-zh.onnx` | `859f9ded9f53be16c24857cdab3254a45da53c3afd5ba6ef134c7de3f822e326` |
+| v1.1 Chinese voices | `models/voices-v1.1-zh.bin` | `14cb6186c99e4f6016871405f62046c5df863ae27465cbdc4ee08be7dd703acd` |
+| Kokoro v1.0 English | `kokoro-v1.0.onnx` | `7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5` |
+| v1.0 voices | `voices-v1.0.bin` | `d19762d46cf0e6648cb28a7711df1637aad15818185d13f4ff840d57f2f6dfed` |
+
+Official asset sources: [Kokoro ONNX v1.1 model/voice release](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.1),
+[Kokoro TTS v1.0 release](https://github.com/nazdridoy/kokoro-tts/releases/tag/v1.0.0),
+and the [official Chinese G2P example](https://github.com/thewh1teagle/kokoro-onnx/blob/main/examples/chinese.py).
+The tested flow does not require the example's `config.json`; the v1.1 model
+embeds the vocabulary used by Misaki.
+
+For original-EPUB splitting, also check out the separate
+[EpubSplit repository](https://github.com/JimmXinu/EpubSplit) and install its
+standalone CLI dependencies (`beautifulsoup4` and `six`). To run the supplied
+`split_epub_chapters.ps1` with the locked environment's Python, put
+`.venv_kokoro_061\Scripts` at the front of `PATH` in that Command Prompt
+session before invoking the script. Split-point mapping is book-specific; use
+the preflight instructions in the [bilingual audiobook skill](.github/skills/bilingual-epub-audiobook/SKILL.md)
+and verify the produced chapter XHTML pairs before starting VIO or TTS.
+
+VIO credentials/configuration are deliberately machine-specific: copy
+`.env.example` to `.env`, fill in the destination computer's approved values,
+and never commit `.env`.
 
 For bilingual EPUBs with paired Chinese/English paragraphs, the optional VIO
 preprocessor can simplify only the Chinese text and retain the English as
