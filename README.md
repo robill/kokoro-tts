@@ -158,6 +158,8 @@ wget https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/kokoro-v1.
 
 ## Usage
 
+For planning EPUB splits and creating recoverable, sequential audiobook MP3s, see the [EPUB-to-audiobook workflow](EPUB_AUDIOBOOK_WORKFLOW.md).
+
 ### Basic Usage
 
 ```bash
