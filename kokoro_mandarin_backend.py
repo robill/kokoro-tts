@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import onnxruntime as ort
 
 
 class KokoroBilingualBackend:
@@ -66,6 +68,15 @@ class KokoroBilingualBackend:
             )
 
         self.zh_g2p = misaki_zh.ZHG2P(version="1.1")
+        available_providers = ort.get_available_providers()
+        provider = os.environ.get("ONNX_PROVIDER")
+        if provider is None:
+            provider = "CUDAExecutionProvider" if "CUDAExecutionProvider" in available_providers else "CPUExecutionProvider"
+            os.environ["ONNX_PROVIDER"] = provider
+        if provider not in available_providers:
+            raise RuntimeError(
+                f"Requested ONNX provider {provider!r} is unavailable; available providers: {available_providers}."
+            )
         self.zh_model = Kokoro(str(self.zh_model_path), str(self.zh_voices_path))
         self.en_model = Kokoro(str(self.en_model_path), str(self.en_voices_path))
 
@@ -101,6 +112,7 @@ class KokoroBilingualBackend:
                 "voice": en_voice,
                 "language": "en-us",
             },
+            "providers": self.providers,
         }
 
     @property

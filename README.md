@@ -325,8 +325,9 @@ The tested flow does not require the example's `config.json`; the v1.1 model
 embeds the vocabulary used by Misaki.
 
 For original-EPUB splitting, also check out the separate
-[EpubSplit repository](https://github.com/JimmXinu/EpubSplit) and install its
-standalone CLI dependencies (`beautifulsoup4` and `six`). To run the supplied
+[EpubSplit repository](https://github.com/JimmXinu/EpubSplit); its standalone
+CLI dependencies (`beautifulsoup4`, `six`, `html5lib`, and `webencodings`) are
+included in the bilingual-audio lock. To run the supplied
 `split_epub_chapters.ps1` with the locked environment's Python, put
 `.venv_kokoro_061\Scripts` at the front of `PATH` in that Command Prompt
 session before invoking the script. Split-point mapping is book-specific; use
@@ -366,6 +367,51 @@ python .\chinese_llm_preprocess.py ".\RMJI Bilingual Chapters 0721-0770.epub" `
 The preprocessing cache is bound to the exact source text and prompt version.
 The audio tool refuses stale or misaligned cache files. Use a new output folder
 when comparing different adaptations or voice/speed settings.
+
+#### English-first triplet study sample
+
+For a presentation that reads the English translation first, followed by the
+original Chinese and then its A2 rewrite, create a reviewed alignment JSON for
+the chapter. Do not infer this mapping from equal paragraph indices: translated
+paragraphs can be split or combined. Chapter 745's alignment map records that
+English paragraphs 23 and 24 together translate original Chinese paragraph 23;
+the other pairs are one-to-one in order.
+
+The chapter-only sample currently in the workspace demonstrates the format:
+[alignment.json](kokoro-tts/RMJI_Chapter_0745_EnglishFirst/alignment.json).
+The generators reuse matching existing English/A2/vocabulary WAV checkpoints,
+synthesize original Chinese through Misaki G2P when needed, and create separate
+study EPUB/audio outputs. The EPUB labels the Chinese lines `原文` and `A2改写`
+so the two versions are visually distinguishable. Use
+`--previous-original-chinese-audio` when refreshing labels/layout to reuse
+previously synthesized original-Chinese WAVs as well. Previous chapter outputs
+are left untouched.
+
+In the audiobook, the generator also speaks the short Mandarin cue `简化版`
+between each original-Chinese paragraph and its A2 rewrite, with a brief pause
+on both sides. The cue is synthesized once and reused throughout the chapter.
+The latest cue-enabled Chapter 745 sample is in
+`RMJI_Chapter_0745_EnglishFirst/output_cued/`.
+
+```powershell
+.\.venv_kokoro_061\Scripts\python.exe .\english_first_chapter.py `
+  ".\RMJI_Chapter_0745_EnglishFirst\Chapter_0745_Bilingual.epub" `
+  ".\RMJI_Bilingual_Chapters_0721-0770_chinese_preprocessed" `
+  ".\RMJI_Bilingual_Chapters_0721-0770_zf003_Misaki_Audio\chapter_0745" `
+  ".\RMJI_Chapter_0745_EnglishFirst\alignment.json" `
+  ".\RMJI_Chapter_0745_EnglishFirst\output"
+```
+
+For a selected contiguous range, prepare one reviewed alignment map per
+chapter, then use `run_english_first_range.py` with the source paired EPUB, A2
+cache, alignment-map directory, prior audio root, EpubSplit script, and a fresh
+output directory. It creates a range study EPUB, individual chapter MP3s, and
+one merged audiobook for only the selected chapters. It also honors explicit
+`ONNX_PROVIDER` settings and selects CUDA when available by default. Chapter
+751's source English translation is incomplete; its alignment record marks the
+gap, and the study EPUB/audio explicitly flags it before preserving the missing
+original-Chinese and A2 passage without inventing English text. Keep the legacy
+multi-chapter runner for its original interleaved ordering only.
 
 To append the cached vocabulary after the chapter narration, add
 `--include-vocabulary-audio`. Each item is spoken as Hanzi by the Mandarin
