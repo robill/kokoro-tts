@@ -24,9 +24,12 @@
         "AUTOSAR": "Auto Sar",
         "QNX":     "Q N X",
         "SoC":     "System on Chip",
-        "SOC":     "System on Chip",
         "BSP":     "B S P",
-        "S32G":    "S 32 G"
+        "S32G":    "S 32 G",
+        "SAIL":    "S A I L",
+        "ISP":     "I S P",
+        "HAL":     "H A L",
+        "OEM":     "O E M"
     },
 
     "Teams / processes": {
@@ -35,18 +38,24 @@
         "IEP":     "I E P",
         "HEP":     "H E P",
         "PMT":     "P M T",
+        "SQM":     "S Q M",
         "DevOps":  "Dev Ops"
     },
 
     "Roles / ceremonies": {
         "STE":     "S T E",
-        "RTE":     "R T E"
+        "RTE":     "R T E",
+        "ART":     "A R T",
+        "PI":      "P I",
+        "PO":      "P O",
+        "BA":      "B A"
     },
 
     "Milestones / planning": {
         "SOP":     "S O P",
         "TSO":     "T S O",
-        "CI/CT":   "C I, C T"
+        "CI/CT":   "C I C T",
+        "TBD":     "T B D"
     },
 
     "Architecture levels": {
